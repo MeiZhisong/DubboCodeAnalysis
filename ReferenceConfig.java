@@ -349,13 +349,17 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
 
     @SuppressWarnings({"unchecked", "rawtypes", "deprecation"})
     private T createProxy(Map<String, String> map) {
+        // 本地引用
         if (shouldJvmRefer(map)) {
+            // localhost，127.0.0.1
             URL url = new URL(LOCAL_PROTOCOL, LOCALHOST_VALUE, 0, interfaceClass.getName()).addParameters(map);
+            // REF_PROTOCOL是Protocol的自适应拓展类，即DubboProtocol。invoker实际上是DubboInvoker的一个实例。
             invoker = REF_PROTOCOL.refer(interfaceClass, url);
             if (logger.isInfoEnabled()) {
                 logger.info("Using injvm service " + interfaceClass.getName());
             }
         } else {
+            // 消除远程重试带来的URLs中添加URL的OOM影响
             urls.clear(); // reference retry init will add url to urls, lead to OOM
             if (url != null && url.length() > 0) { // user specified URL, could be peer-to-peer address, or register center's address.
                 String[] us = SEMICOLON_SPLIT_PATTERN.split(url);
@@ -363,8 +367,10 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
                     for (String u : us) {
                         URL url = URL.valueOf(u);
                         if (StringUtils.isEmpty(url.getPath())) {
+                            // 设置url的路径为接口的全限定名
                             url = url.setPath(interfaceName);
                         }
+                        // URL的协议如果等于registry,表示使用指定的注册中心
                         if (REGISTRY_PROTOCOL.equals(url.getProtocol())) {
                             urls.add(url.addParameterAndEncoded(REFER_KEY, StringUtils.toQueryString(map)));
                         } else {
@@ -372,10 +378,12 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
                         }
                     }
                 }
+            // 如果url为空
             } else { // assemble URL from register center's configuration
-                // if protocols not injvm checkRegistry
+                // protocol 不等于 injvm
                 if (!LOCAL_PROTOCOL.equalsIgnoreCase(getProtocol())){
                     checkRegistry();
+                    // 加载注册中心的url
                     List<URL> us = loadRegistries(false);
                     if (CollectionUtils.isNotEmpty(us)) {
                         for (URL u : us) {
@@ -383,6 +391,7 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
                             if (monitorUrl != null) {
                                 map.put(MONITOR_KEY, URL.encode(monitorUrl.toFullString()));
                             }
+                            // url中添加refer参数信息，再将url添加到urls中。
                             urls.add(u.addParameterAndEncoded(REFER_KEY, StringUtils.toQueryString(map)));
                         }
                     }
@@ -399,6 +408,7 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
                 URL registryURL = null;
                 for (URL url : urls) {
                     invokers.add(REF_PROTOCOL.refer(interfaceClass, url));
+                    // 如果url的协议等于registry，将最后一个注册中心URL作为registryUrl.
                     if (REGISTRY_PROTOCOL.equals(url.getProtocol())) {
                         registryURL = url; // use last registry url
                     }
@@ -414,6 +424,7 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
             }
         }
 
+        // check = "true" && invoker如果不可用
         if (shouldCheck() && !invoker.isAvailable()) {
             throw new IllegalStateException("Failed to check the status of the service " + interfaceName + ". No provider available for the service " + (group == null ? "" : group + "/") + interfaceName + (version == null ? "" : ":" + version) + " from the url " + invoker.getUrl() + " to the consumer " + NetUtils.getLocalHost() + " use dubbo version " + Version.getVersion());
         }
@@ -424,26 +435,21 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
          * @since 2.7.0
          * ServiceData Store
          */
+        // ！！！ 这里暂时跳过，待以后研究下。
         MetadataReportService metadataReportService = null;
         if ((metadataReportService = getMetadataReportService()) != null) {
             URL consumerURL = new URL(CONSUMER_PROTOCOL, map.remove(REGISTER_IP_KEY), 0, map.get(INTERFACE_KEY), map);
             metadataReportService.publishConsumer(consumerURL);
         }
-        // create service proxy
+        // 将invoker作为参数，创建代理
         return (T) PROXY_FACTORY.getProxy(invoker);
     }
 
-    /**
-     * Figure out should refer the service in the same JVM from configurations. The default behavior is true
-     * 1. if injvm is specified, then use it
-     * 2. then if a url is specified, then assume it's a remote call
-     * 3. otherwise, check scope parameter
-     * 4. if scope is not specified but the target service is provided in the same JVM, then prefer to make the local
-     * call, which is the default behavior
-     */
+    // 是否应该本地引用
     protected boolean shouldJvmRefer(Map<String, String> map) {
         URL tmpUrl = new URL("temp", "localhost", 0, map);
         boolean isJvmRefer;
+        // 没有设置injvm的值
         if (isInjvm() == null) {
             // if a url is specified, don't do local reference
             if (url != null && url.length() > 0) {
@@ -453,6 +459,7 @@ public class ReferenceConfig<T> extends AbstractReferenceConfig {
                 isJvmRefer = InjvmProtocol.getInjvmProtocol().isInjvmRefer(tmpUrl);
             }
         } else {
+            // 获取injvm属性的值
             isJvmRefer = isInjvm();
         }
         return isJvmRefer;
