@@ -74,12 +74,14 @@ public abstract class Proxy {
      * @return Proxy instance.
      */
     public static Proxy getProxy(ClassLoader cl, Class<?>... ics) {
+        //  > 65535
         if (ics.length > MAX_PROXY_COUNT) {
             throw new IllegalArgumentException("interface limit exceeded");
         }
 
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < ics.length; i++) {
+            // 接口的全限定名
             String itf = ics[i].getName();
             if (!ics[i].isInterface()) {
                 throw new RuntimeException(itf + " is not a interface.");
@@ -87,6 +89,7 @@ public abstract class Proxy {
 
             Class<?> tmp = null;
             try {
+                // 使用指定的类加载器重新加载接口类
                 tmp = Class.forName(itf, false, cl);
             } catch (ClassNotFoundException e) {
             }
@@ -98,7 +101,7 @@ public abstract class Proxy {
             sb.append(itf).append(';');
         }
 
-        // use interface class name list as key.
+        // 接口的列表字符串
         String key = sb.toString();
 
         // get cache by class loader.
@@ -110,6 +113,7 @@ public abstract class Proxy {
         Proxy proxy = null;
         synchronized (cache) {
             do {
+                // 从缓存中取出Reference<Proxy>实例
                 Object value = cache.get(key);
                 if (value instanceof Reference<?>) {
                     proxy = (Proxy) ((Reference<?>) value).get();
@@ -117,9 +121,10 @@ public abstract class Proxy {
                         return proxy;
                     }
                 }
-
+                // 并发控制，保证只有一个线程可以进行后续操作
                 if (value == PENDING_GENERATION_MARKER) {
                     try {
+                        // 其他线程在这里等待
                         cache.wait();
                     } catch (InterruptedException e) {
                     }
@@ -135,17 +140,21 @@ public abstract class Proxy {
         String pkg = null;
         ClassGenerator ccp = null, ccm = null;
         try {
+            // 创建ClassGenerator对象
             ccp = ClassGenerator.newInstance(cl);
 
             Set<String> worked = new HashSet<>();
             List<Method> methods = new ArrayList<>();
 
             for (int i = 0; i < ics.length; i++) {
+                // 检测接口访问级别是否是protected或者private
                 if (!Modifier.isPublic(ics[i].getModifiers())) {
+                    // 获取接口包名
                     String npkg = ics[i].getPackage().getName();
                     if (pkg == null) {
                         pkg = npkg;
                     } else {
+                        // 非public的接口必须在同一个包下
                         if (!pkg.equals(npkg)) {
                             throw new IllegalArgumentException("non-public interfaces from different packages");
                         }
@@ -155,6 +164,7 @@ public abstract class Proxy {
 
                 for (Method method : ics[i].getMethods()) {
                     String desc = ReflectUtils.getDesc(method);
+                    // 并发的处理
                     if (worked.contains(desc)) {
                         continue;
                     }
@@ -163,13 +173,16 @@ public abstract class Proxy {
                     int ix = methods.size();
                     Class<?> rt = method.getReturnType();
                     Class<?>[] pts = method.getParameterTypes();
-
+                    // Object[] args = new Object[1...n];
                     StringBuilder code = new StringBuilder("Object[] args = new Object[").append(pts.length).append("];");
                     for (int j = 0; j < pts.length; j++) {
+                        // args[1...n] = ($w) $1...n;
                         code.append(" args[").append(j).append("] = ($w)$").append(j + 1).append(";");
                     }
+                    // Object ret = handler.invoke(this, methods[1...n], args);
                     code.append(" Object ret = handler.invoke(this, methods[").append(ix).append("], args);");
                     if (!Void.TYPE.equals(rt)) {
+                        // 形如return (java.lang.String) ret;
                         code.append(" return ").append(asArgument(rt, "ret")).append(";");
                     }
 
@@ -179,6 +192,7 @@ public abstract class Proxy {
             }
 
             if (pkg == null) {
+                // Proxy的包名
                 pkg = PACKAGE_NAME;
             }
 
@@ -187,8 +201,11 @@ public abstract class Proxy {
             ccp.setClassName(pcn);
             ccp.addField("public static java.lang.reflect.Method[] methods;");
             ccp.addField("private " + InvocationHandler.class.getName() + " handler;");
+            // public proxy0(java.lang.reflect.InvocationHandler args0) {handler = $1;}
             ccp.addConstructor(Modifier.PUBLIC, new Class<?>[]{InvocationHandler.class}, new Class<?>[0], "handler=$1;");
+            // public proxy0() {}
             ccp.addDefaultConstructor();
+            // ClassGenerator对象
             Class<?> clazz = ccp.toClass();
             clazz.getField("methods").set(null, methods.toArray(new Method[0]));
 
@@ -198,6 +215,8 @@ public abstract class Proxy {
             ccm.setClassName(fcn);
             ccm.addDefaultConstructor();
             ccm.setSuperClass(Proxy.class);
+            // 实现Proxy的newInstance抽象方法
+            // public Object newInstance(java.lang.reflect.InvocationHandler h) {return new org.apache.dubbo.Proxy0($1);}
             ccm.addMethod("public Object newInstance(" + InvocationHandler.class.getName() + " h){ return new " + pcn + "($1); }");
             Class<?> pc = ccm.toClass();
             proxy = (Proxy) pc.newInstance();
@@ -215,10 +234,13 @@ public abstract class Proxy {
             }
             synchronized (cache) {
                 if (proxy == null) {
+                    // 如果代理为空，删除key对应的键值对
                     cache.remove(key);
                 } else {
+                    // 写缓存
                     cache.put(key, new WeakReference<Proxy>(proxy));
                 }
+                // 唤醒其他等待的线程
                 cache.notifyAll();
             }
         }
