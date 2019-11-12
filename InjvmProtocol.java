@@ -58,12 +58,13 @@ public class InjvmProtocol extends AbstractProtocol implements Protocol {
 
     static Exporter<?> getExporter(Map<String, Exporter<?>> map, URL key) {
         Exporter<?> result = null;
-
+        // {group}/{interfaceName}:{version}
         if (!key.getServiceKey().contains("*")) {
             result = map.get(key.getServiceKey());
         } else {
             if (CollectionUtils.isNotEmptyMap(map)) {
                 for (Exporter<?> exporter : map.values()) {
+                    // 比较group,interfaceName和version,是否相同或者等于*
                     if (UrlUtils.isServiceKeyMatch(key, exporter.getInvoker().getUrl())) {
                         result = exporter;
                         break;
@@ -74,6 +75,7 @@ public class InjvmProtocol extends AbstractProtocol implements Protocol {
 
         if (result == null) {
             return null;
+        // 获取url中generic的值，是否匹配true，nativejava,bean, protocol-json
         } else if (ProtocolUtils.isGeneric(
                 result.getInvoker().getUrl().getParameter(GENERIC_KEY))) {
             return null;
@@ -97,16 +99,18 @@ public class InjvmProtocol extends AbstractProtocol implements Protocol {
         return new InjvmInvoker<T>(serviceType, url, url.getServiceKey(), exporterMap);
     }
 
+    // 是否倾向于本地引用
     public boolean isInjvmRefer(URL url) {
+        // url.getParameter("scope")
         String scope = url.getParameter(SCOPE_KEY);
-        // Since injvm protocol is configured explicitly, we don't need to set any extra flag, use normal refer process.
+        // scope = "local" || injvm = "true"
         if (SCOPE_LOCAL.equals(scope) || (url.getParameter(LOCAL_PROTOCOL, false))) {
-            // if it's declared as local reference
-            // 'scope=local' is equivalent to 'injvm=true', injvm will be deprecated in the future release
             return true;
+        // scope = "remote"
         } else if (SCOPE_REMOTE.equals(scope)) {
             // it's declared as remote reference
             return false;
+        // generic = "true"
         } else if (url.getParameter(GENERIC_KEY, false)) {
             // generic invocation is not local reference
             return false;
